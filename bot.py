@@ -8,7 +8,7 @@ from datetime import datetime
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 OCORRENCIAS_URL = "https://api.fogos.pt/v2/incidents/active?all=1"
-OPENWEATHER_API_KEY = "d3ca2afa41223a9d5ac00a5c53576bd9"
+OPENWEATHER_API_KEY = "01b51257a7270ea6df00f03338671a70"
 
 ocorrencias_enviadas = set()
 
@@ -20,6 +20,7 @@ def get_weather(lat, lon):
             f"https://api.openweathermap.org/data/2.5/weather"
             f"?lat={lat}&lon={lon}&units=metric&appid={OPENWEATHER_API_KEY}"
         )
+        print(f"🌐 Meteo API chamada: {url}")
         response = requests.get(url)
         if response.status_code == 200:
             data = response.json()
@@ -33,10 +34,10 @@ def get_weather(lat, lon):
                    f"\n💧 *Humidade:* {humidity}%"
         else:
             print(f"❌ OpenWeather error {response.status_code}")
-            return ""
+            return "\n⚠️ *Meteo:* Dados indisponíveis"
     except Exception as e:
         print(f"❌ Erro ao obter meteo: {e}")
-        return ""
+        return "\n⚠️ *Meteo:* Erro ao obter dados"
 
 
 def deg_to_compass(deg):
@@ -46,17 +47,47 @@ def deg_to_compass(deg):
     return dirs[ix]
 
 
+def geocode_local(localidade, concelho):
+    """Tenta obter lat/lng a partir de localidade + concelho"""
+    try:
+        query = f"{localidade}, {concelho}, Portugal"
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {"q": query, "format": "json", "limit": 1}
+        headers = {"User-Agent": "BVOFradesBot/1.0"}
+        print(f"📍 Geocoding '{query}'...")
+        response = requests.get(url, params=params, headers=headers)
+        if response.status_code == 200 and response.json():
+            result = response.json()[0]
+            lat = float(result['lat'])
+            lon = float(result['lon'])
+            print(f"✅ Geocoding → lat={lat}, lon={lon}")
+            return lat, lon
+        else:
+            print(f"❌ Geocoding falhou para '{query}'")
+            return None, None
+    except Exception as e:
+        print(f"❌ Erro no geocoding: {e}")
+        return None, None
+
+
 def enviar_alerta(ocorrencia):
     lat = ocorrencia.get("lat")
     lon = ocorrencia.get("lng")
+
+    # Tentativa de converter coordenadas do JSON
     try:
-        lat = float(lat)
-        lon = float(lon)
+        lat = float(lat) if lat else None
+        lon = float(lon) if lon else None
     except (TypeError, ValueError):
-        print("⚠️ Coordenadas inválidas, não adiciona meteo.")
         lat = lon = None
 
-    meteo_texto = get_weather(lat, lon) if lat and lon else ""
+    # Se não houver coordenadas, tenta geocoding
+    if not lat or not lon:
+        print("⚠️ Sem lat/lon no JSON, a tentar geocoding...")
+        lat, lon = geocode_local(ocorrencia['localidade'], ocorrencia['concelho'])
+
+    # Meteo (se conseguirmos coordenadas)
+    meteo_texto = get_weather(lat, lon) if lat and lon else "\n⚠️ *Meteo:* Sem coordenadas disponíveis"
 
     mensagem = (
         f"*⚠️ Nova ocorrência!*\n\n"
@@ -104,6 +135,7 @@ def verificar_ocorrencias():
 
     except Exception as e:
         print(f"❌ Erro ao verificar ocorrências: {e}")
+
 
 # Agendamento
 schedule.every(2).minutes.do(verificar_ocorrencias)
