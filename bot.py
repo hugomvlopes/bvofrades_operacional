@@ -66,7 +66,17 @@ def carregar_pontos_agua():
         response = requests.get(url)
         if response.status_code == 200:
             geojson = response.json()
-            return geojson["features"]
+            pontos_validos = []
+            for ponto in geojson.get("features", []):
+                props = ponto.get("properties", {})
+                geometry = ponto.get("geometry", {})
+                coords = geometry.get("coordinates", [])
+                if geometry.get("type") != "Point" or not coords or len(coords) < 2:
+                    print(f"⚠️ Ponto inválido ignorado: {props.get('nome', 'Sem Nome')}")
+                    continue
+                pontos_validos.append(ponto)
+            print(f"✅ Pontos de água carregados: {len(pontos_validos)} válidos")
+            return pontos_validos
         else:
             print(f"❌ Erro ao carregar GeoJSON: {response.status_code}")
             return []
@@ -81,8 +91,10 @@ def ponto_agua_proximo(lat, lon, pontos_agua):
     ponto_mais_proximo = None
 
     for ponto in pontos_agua:
-        props = ponto["properties"]
-        coords = ponto["geometry"]["coordinates"]
+        props = ponto.get("properties", {})
+        coords = ponto.get("geometry", {}).get("coordinates", [])
+        if not coords or len(coords) < 2:
+            continue  # Já filtrámos antes, mas reforço
         ponto_lat, ponto_lon = coords[1], coords[0]
         dist = haversine(lat, lon, ponto_lat, ponto_lon)
         if dist < menor_dist:
@@ -98,7 +110,7 @@ def ponto_agua_proximo(lat, lon, pontos_agua):
 
 
 def gerar_mapa(lat, lon, ponto_lat, ponto_lon, user_lat=None, user_lon=None):
-    """Gera URL do mapa satélite com ocorrência, ponto de água e user (se existir)"""
+    """Gera URL do mapa satélite com ocorrência, ponto de água e user"""
     base_url = (
         "https://maps.googleapis.com/maps/api/staticmap"
         f"?size=600x400&maptype=satellite"
