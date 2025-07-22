@@ -4,13 +4,25 @@ import schedule
 import os
 import json
 from datetime import datetime
+from math import radians, cos, sin, asin, sqrt
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 OCORRENCIAS_URL = "https://api.fogos.pt/v2/incidents/active?all=1"
-OPENWEATHER_API_KEY = "01b51257a7270ea6df00f03338671a70"
+OPENWEATHER_API_KEY = "d3ca2afa41223a9d5ac00a5c53576bd9"
+GOOGLE_MAPS_API_KEY = "AIzaSyCWB5tAKnFKHIlgulZwtasNHSKSIwwdDxg"
 
 ocorrencias_enviadas = set()
+
+
+def haversine(lat1, lon1, lat2, lon2):
+    """Calcula a distância em km entre dois pontos"""
+    R = 6371
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    c = 2 * asin(sqrt(a))
+    return R * c
 
 
 def get_weather(lat, lon):
@@ -47,54 +59,99 @@ def deg_to_compass(deg):
     return dirs[ix]
 
 
-def geocode_local(localidade, concelho):
-    """Tenta obter lat/lng a partir de localidade + concelho"""
+def carregar_pontos_agua():
+    """Carrega GeoJSON dos pontos de água online"""
     try:
-        query = f"{localidade}, {concelho}, Portugal"
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {"q": query, "format": "json", "limit": 1}
-        headers = {"User-Agent": "BVOFradesBot/1.0"}
-        print(f"📍 Geocoding '{query}'...")
-        response = requests.get(url, params=params, headers=headers)
-        if response.status_code == 200 and response.json():
-            result = response.json()[0]
-            lat = float(result['lat'])
-            lon = float(result['lon'])
-            print(f"✅ Geocoding → lat={lat}, lon={lon}")
-            return lat, lon
+        url = "https://gist.githubusercontent.com/hugomvlopes/113df2bccf66b69ffa351ff7b24f04d6/raw"
+        response = requests.get(url)
+        if response.status_code == 200:
+            geojson = response.json()
+            return geojson["features"]
         else:
-            print(f"❌ Geocoding falhou para '{query}'")
-            return None, None
+            print(f"❌ Erro ao carregar GeoJSON: {response.status_code}")
+            return []
     except Exception as e:
-        print(f"❌ Erro no geocoding: {e}")
-        return None, None
+        print(f"❌ Erro ao carregar pontos de água: {e}")
+        return []
 
 
-def enviar_alerta(ocorrencia):
+def ponto_agua_proximo(lat, lon, pontos_agua):
+    """Encontra o ponto de água mais próximo da ocorrência"""
+    menor_dist = float("inf")
+    ponto_mais_proximo = None
+
+    for ponto in pontos_agua:
+        props = ponto["properties"]
+        coords = ponto["geometry"]["coordinates"]
+        ponto_lat, ponto_lon = coords[1], coords[0]
+        dist = haversine(lat, lon, ponto_lat, ponto_lon)
+        if dist < menor_dist:
+            menor_dist = dist
+            ponto_mais_proximo = {
+                "nome": props.get("nome", "Sem Nome"),
+                "tipo": props.get("tipo", "Desconhecido"),
+                "lat": ponto_lat,
+                "lon": ponto_lon,
+                "distancia": round(menor_dist, 2)
+            }
+    return ponto_mais_proximo
+
+
+def gerar_mapa(lat, lon, ponto_lat, ponto_lon, user_lat=None, user_lon=None):
+    """Gera URL do mapa satélite com ocorrência, ponto de água e user (se existir)"""
+    base_url = (
+        "https://maps.googleapis.com/maps/api/staticmap"
+        f"?size=600x400&maptype=satellite"
+        f"&markers=color:red|label:O|{lat},{lon}"
+        f"&markers=color:blue|label:P|{ponto_lat},{ponto_lon}"
+    )
+    if user_lat and user_lon:
+        base_url += f"&markers=color:green|label:U|{user_lat},{user_lon}"
+    base_url += f"&key={GOOGLE_MAPS_API_KEY}"
+    return base_url
+
+
+def enviar_alerta(ocorrencia, user_location=None):
     lat = ocorrencia.get("lat")
     lon = ocorrencia.get("lng")
 
-    # Tentativa de converter coordenadas do JSON
     try:
         lat = float(lat) if lat else None
         lon = float(lon) if lon else None
     except (TypeError, ValueError):
         lat = lon = None
 
-    # Se não houver coordenadas, tenta geocoding
     if not lat or not lon:
-        print("⚠️ Sem lat/lon no JSON, a tentar geocoding...")
-        lat, lon = geocode_local(ocorrencia['localidade'], ocorrencia['concelho'])
+        print("⚠️ Sem lat/lon no JSON, sem dados adicionais.")
+        meteo_texto = "\n⚠️ *Meteo:* Sem coordenadas disponíveis"
+        ponto_texto = "\n⚠️ *Ponto de Água:* Sem coordenadas disponíveis"
+        mapa_url = None
+    else:
+        meteo_texto = get_weather(lat, lon)
+        pontos_agua = carregar_pontos_agua()
+        ponto = ponto_agua_proximo(lat, lon, pontos_agua) if pontos_agua else None
 
-    # Meteo (se conseguirmos coordenadas)
-    meteo_texto = get_weather(lat, lon) if lat and lon else "\n⚠️ *Meteo:* Sem coordenadas disponíveis"
+        if ponto:
+            ponto_texto = (
+                f"\n💧 *Ponto de Água mais próximo:*\n"
+                f"📌 {ponto['nome']} ({ponto['tipo']})\n"
+                f"📍 Distância: {ponto['distancia']} km\n"
+                f"🌐 [Ver no mapa](https://www.google.com/maps?q={ponto['lat']},{ponto['lon']})"
+            )
+            user_lat = user_location['latitude'] if user_location else None
+            user_lon = user_location['longitude'] if user_location else None
+            mapa_url = gerar_mapa(lat, lon, ponto['lat'], ponto['lon'], user_lat, user_lon)
+        else:
+            ponto_texto = "\n⚠️ *Ponto de Água:* Nenhum encontrado"
+            mapa_url = None
 
     mensagem = (
         f"*⚠️ Nova ocorrência!*\n\n"
         f"🕒 *Data:* {ocorrencia['date']} às {ocorrencia['hour']}\n"
         f"🚨 *Tipo:* {ocorrencia['natureza']}\n"
         f"📍 *Local:* {ocorrencia['concelho']} / {ocorrencia['localidade']}\n"
-        f"{meteo_texto}\n\n"
+        f"{meteo_texto}\n"
+        f"{ponto_texto}\n\n"
         f"📡 _Dados: Prociv / fogos.pt_\n"
         f"💬 Esta mensagem é automática | @bvofrades"
     )
@@ -107,15 +164,27 @@ def enviar_alerta(ocorrencia):
         ]
     }
 
-    response = requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        json={
-            "chat_id": CHAT_ID,
-            "text": mensagem,
-            "parse_mode": "Markdown",
-            "reply_markup": json.dumps(buttons)
+    if mapa_url:
+        photo_payload = {
+            'chat_id': CHAT_ID,
+            'photo': mapa_url,
+            'caption': mensagem,
+            'parse_mode': 'Markdown'
         }
-    )
+        response = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+            data=photo_payload
+        )
+    else:
+        response = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id": CHAT_ID,
+                "text": mensagem,
+                "parse_mode": "Markdown",
+                "reply_markup": json.dumps(buttons)
+            }
+        )
 
     print(f"✅ Alerta enviado! Status: {response.status_code}")
 
@@ -137,7 +206,6 @@ def verificar_ocorrencias():
         print(f"❌ Erro ao verificar ocorrências: {e}")
 
 
-# Agendamento
 schedule.every(2).minutes.do(verificar_ocorrencias)
 
 print("🕒 Agendamentos ativos: Ocorrências a cada 2 min")
