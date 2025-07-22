@@ -9,7 +9,7 @@ from math import radians, cos, sin, asin, sqrt
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 OCORRENCIAS_URL = "https://api.fogos.pt/v2/incidents/active?all=1"
-OPENWEATHER_API_KEY = "d3ca2afa41223a9d5ac00a5c53576bd9"
+OPENWEATHER_API_KEY = "01b51257a7270ea6df00f03338671a70"
 GOOGLE_MAPS_API_KEY = "AIzaSyCWB5tAKnFKHIlgulZwtasNHSKSIwwdDxg"
 
 ocorrencias_enviadas = set()
