@@ -7,7 +7,7 @@ from datetime import datetime
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-OCORRENCIAS_URL = "https://api.fogos.pt/v2/incidents/active?all=1&concelho=Oliveira%20De%20Frades"
+OCORRENCIAS_URL = "https://api.fogos.pt/v2/incidents/active?all=1"
 
 ocorrencias_enviadas = set()
 
