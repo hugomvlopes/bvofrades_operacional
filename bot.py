@@ -62,7 +62,7 @@ def deg_to_compass(deg):
 def carregar_pontos_agua():
     """Carrega GeoJSON dos pontos de água online"""
     try:
-        url = "https://gist.githubusercontent.com/hugomvlopes/113df2bccf66b69ffa351ff7b24f04d6/raw"
+        url = "url = "https://gist.githubusercontent.com/hugomvlopes/dee1479661f155bec211e9b2b6915415/raw"
         response = requests.get(url)
         if response.status_code == 200:
             geojson = response.json()
@@ -90,23 +90,38 @@ def ponto_agua_proximo(lat, lon, pontos_agua):
     menor_dist = float("inf")
     ponto_mais_proximo = None
 
+    tipo_hidra_map = {
+        1: "Hidrante Enterrado",
+        2: "Hidrante Sobreelevado",
+        3: "Boca de Incêndio Mural"
+    }
+
     for ponto in pontos_agua:
         props = ponto.get("properties", {})
-        coords = ponto.get("geometry", {}).get("coordinates", [])
-        if not coords or len(coords) < 2:
-            continue  # Já filtrámos antes, mas reforço
+        geometry = ponto.get("geometry", {})
+        coords = geometry.get("coordinates", [])
+
+        if geometry.get("type") != "Point" or not coords or len(coords) < 2:
+            print("⚠️ Ponto inválido ignorado (sem coordenadas)")
+            continue
+
         ponto_lat, ponto_lon = coords[1], coords[0]
         dist = haversine(lat, lon, ponto_lat, ponto_lon)
+
         if dist < menor_dist:
             menor_dist = dist
+            id_hidra = props.get("id_hidra", "Sem ID")
+            tipo_hidra = tipo_hidra_map.get(props.get("tipo_hidra"), "Tipo desconhecido")
+
             ponto_mais_proximo = {
-                "nome": props.get("nome", "Sem Nome"),
-                "tipo": props.get("tipo", "Desconhecido"),
+                "nome": f"Hidrante {id_hidra}",
+                "tipo": tipo_hidra,
                 "lat": ponto_lat,
                 "lon": ponto_lon,
                 "distancia": round(menor_dist, 2)
             }
     return ponto_mais_proximo
+
 
 
 def gerar_mapa(lat, lon, ponto_lat, ponto_lon, user_lat=None, user_lon=None):
