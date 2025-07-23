@@ -3,13 +3,14 @@ import time
 import schedule
 import os
 import json
+import csv
 from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 OCORRENCIAS_URL = "https://api.fogos.pt/v2/incidents/active?all=1"
-OPENWEATHER_API_KEY = "01b51257a7270ea6df00f03338671a70"
+OPENWEATHER_API_KEY = "d3ca2afa41223a9d5ac00a5c53576bd9"
 GOOGLE_MAPS_API_KEY = "AIzaSyCWB5tAKnFKHIlgulZwtasNHSKSIwwdDxg"
 
 ocorrencias_enviadas = set()
@@ -59,29 +60,29 @@ def deg_to_compass(deg):
     return dirs[ix]
 
 
-def carregar_pontos_agua():
-    """Carrega GeoJSON dos pontos de água online"""
+def carregar_pontos_agua_csv():
+    """Carrega pontos de água do CSV online"""
     try:
-        url = "https://gist.githubusercontent.com/hugomvlopes/dee1479661f155bec211e9b2b6915415/raw"
+        url = "https://gist.githubusercontent.com/hugomvlopes/d50eb30cff380c73f09579789046e190/raw/redehidra.csv"
         response = requests.get(url)
         if response.status_code == 200:
-            geojson = response.json()
-            pontos_validos = []
-            for ponto in geojson.get("features", []):
-                props = ponto.get("properties", {})
-                geometry = ponto.get("geometry", {})
-                coords = geometry.get("coordinates", [])
-                if geometry.get("type") != "Point" or not coords or len(coords) < 2:
-                    print(f"⚠️ Ponto inválido ignorado: {props.get('nome', 'Sem Nome')}")
-                    continue
-                pontos_validos.append(ponto)
-            print(f"✅ Pontos de água carregados: {len(pontos_validos)} válidos")
-            return pontos_validos
+            decoded = response.content.decode('utf-8').splitlines()
+            reader = csv.DictReader(decoded)
+            pontos = []
+            for row in reader:
+                pontos.append({
+                    "nome": f"Hidrante {row['id_hidra']}",
+                    "tipo": row['tipo_hidra'],
+                    "lat": float(row['latitude']),
+                    "lon": float(row['longitude'])
+                })
+            print(f"✅ Pontos de água carregados: {len(pontos)}")
+            return pontos
         else:
-            print(f"❌ Erro ao carregar GeoJSON: {response.status_code}")
+            print(f"❌ Erro ao carregar CSV: {response.status_code}")
             return []
     except Exception as e:
-        print(f"❌ Erro ao carregar pontos de água: {e}")
+        print(f"❌ Erro ao carregar pontos de água CSV: {e}")
         return []
 
 
@@ -90,38 +91,20 @@ def ponto_agua_proximo(lat, lon, pontos_agua):
     menor_dist = float("inf")
     ponto_mais_proximo = None
 
-    tipo_hidra_map = {
-        1: "Hidrante Enterrado",
-        2: "Hidrante Sobreelevado",
-        3: "Boca de Incêndio Mural"
-    }
-
     for ponto in pontos_agua:
-        props = ponto.get("properties", {})
-        geometry = ponto.get("geometry", {})
-        coords = geometry.get("coordinates", [])
-
-        if geometry.get("type") != "Point" or not coords or len(coords) < 2:
-            print("⚠️ Ponto inválido ignorado (sem coordenadas)")
-            continue
-
-        ponto_lat, ponto_lon = coords[1], coords[0]
+        ponto_lat = ponto['lat']
+        ponto_lon = ponto['lon']
         dist = haversine(lat, lon, ponto_lat, ponto_lon)
-
         if dist < menor_dist:
             menor_dist = dist
-            id_hidra = props.get("id_hidra", "Sem ID")
-            tipo_hidra = tipo_hidra_map.get(props.get("tipo_hidra"), "Tipo desconhecido")
-
             ponto_mais_proximo = {
-                "nome": f"Hidrante {id_hidra}",
-                "tipo": tipo_hidra,
+                "nome": ponto['nome'],
+                "tipo": ponto['tipo'],
                 "lat": ponto_lat,
                 "lon": ponto_lon,
                 "distancia": round(menor_dist, 2)
             }
     return ponto_mais_proximo
-
 
 
 def gerar_mapa(lat, lon, ponto_lat, ponto_lon, user_lat=None, user_lon=None):
@@ -155,7 +138,7 @@ def enviar_alerta(ocorrencia, user_location=None):
         mapa_url = None
     else:
         meteo_texto = get_weather(lat, lon)
-        pontos_agua = carregar_pontos_agua()
+        pontos_agua = carregar_pontos_agua_csv()
         ponto = ponto_agua_proximo(lat, lon, pontos_agua) if pontos_agua else None
 
         if ponto:
