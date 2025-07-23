@@ -62,7 +62,7 @@ def deg_to_compass(deg):
 def carregar_pontos_agua():
     """Carrega GeoJSON dos pontos de água online"""
     try:
-        url = "url = "https://gist.github.com/hugomvlopes/dee1479661f155bec211e9b2b6915415"
+        url = "https://gist.githubusercontent.com/hugomvlopes/dee1479661f155bec211e9b2b6915415/raw"
         response = requests.get(url)
         if response.status_code == 200:
             geojson = response.json()
